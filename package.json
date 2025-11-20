@@ -1,0 +1,25 @@
+{
+  "name": "gemini-brand-mention-checker",
+  "version": "1.0.0",
+  "description": "A full-stack application to check brand mentions in Gemini AI responses",
+  "private": true,
+  "scripts": {
+    "install-all": "cd backend && npm install && cd ../frontend && npm install",
+    "dev": "echo 'Please run backend and frontend separately' && echo 'Terminal 1: cd backend && npm run dev' && echo 'Terminal 2: cd frontend && npm run dev'",
+    "backend": "cd backend && npm run dev",
+    "frontend": "cd frontend && npm run dev"
+  },
+  "keywords": [
+    "gemini",
+    "ai",
+    "brand-mention",
+    "checker"
+  ],
+  "author": "",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/gemini-brand-checker.git"
+  }
+}
+
