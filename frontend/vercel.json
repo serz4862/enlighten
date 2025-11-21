@@ -6,7 +6,7 @@
   "env": {
     "NEXT_PUBLIC_API_URL": {
       "description": "Backend API URL (e.g., https://your-backend.onrender.com)",
-      "value": ""
+      "value": "https://enlighten-8o45.onrender.com"
     }
   }
 }
