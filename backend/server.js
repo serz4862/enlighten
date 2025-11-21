@@ -8,6 +8,22 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Validate API key before starting
+if (!process.env.GEMINI_API_KEY) {
+  console.error('❌ ERROR: GEMINI_API_KEY is not set in environment variables!');
+  console.error('Please create a .env file in the backend directory with:');
+  console.error('GEMINI_API_KEY=your_actual_api_key_here');
+  console.error('\nGet your API key from: https://makersuite.google.com/app/apikey');
+  process.exit(1);
+}
+
+if (process.env.GEMINI_API_KEY.trim() === '' || process.env.GEMINI_API_KEY === 'your_actual_api_key_here') {
+  console.error('❌ ERROR: GEMINI_API_KEY is empty or still has placeholder value!');
+  console.error('Please update your .env file with a valid Gemini API key.');
+  console.error('Get your API key from: https://makersuite.google.com/app/apikey');
+  process.exit(1);
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -15,8 +31,16 @@ app.use(express.json());
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Model configuration - Using gemini-1.5-flash (least expensive model)
-const MODEL_NAME = 'gemini-1.5-flash';
+// Model configuration - Try multiple models in order of preference (cheapest/fastest first)
+// Based on available models from Gemini API v1beta
+const MODEL_OPTIONS = [
+  'gemini-2.5-flash',     // Fastest and most cost-effective (stable release June 2025)
+  'gemini-2.5-pro',       // More capable if flash unavailable
+  'gemini-2.0-flash-exp'  // Experimental version as fallback
+];
+
+// Use the first model as default, will try others if it fails
+const MODEL_NAME = MODEL_OPTIONS[0];
 const TEMPERATURE = 0.7;
 
 /**
@@ -94,7 +118,12 @@ These represent various options available for your needs.`;
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', model: MODEL_NAME, temperature: TEMPERATURE });
+  res.json({ 
+    status: 'ok', 
+    model: MODEL_NAME, 
+    modelOptions: MODEL_OPTIONS,
+    temperature: TEMPERATURE 
+  });
 });
 
 // Main API endpoint to check brand mention
@@ -119,24 +148,79 @@ app.post('/api/check-brand', async (req, res) => {
 
     let geminiResponse;
     let usedCannedResponse = false;
+    let modelUsed = MODEL_NAME;
 
     try {
-      // Get Gemini model
-      const model = genAI.getGenerativeModel({ 
-        model: MODEL_NAME,
-        generationConfig: {
-          temperature: TEMPERATURE,
-          maxOutputTokens: 1024,
-        }
-      });
+      // Try different models in order of preference
+      let lastError = null;
+      let success = false;
 
-      // Generate content
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      geminiResponse = response.text();
+      for (const modelName of MODEL_OPTIONS) {
+        try {
+          // Get Gemini model with proper configuration
+          const model = genAI.getGenerativeModel({ 
+            model: modelName,
+            generationConfig: {
+              temperature: TEMPERATURE,
+              maxOutputTokens: 2048, // Increased for longer responses
+              topP: 0.95,
+              topK: 40,
+            }
+          });
+
+          // Generate content
+          const result = await model.generateContent(prompt);
+          const response = await result.response;
+          
+          // Get text from response - properly handle the response structure
+          try {
+            // Try standard text() method first
+            if (typeof response.text === 'function') {
+              geminiResponse = response.text();
+            }
+          } catch (textError) {
+            console.log(`Note: response.text() failed: ${textError.message}`);
+          }
+
+          // Fallback: extract from candidates if text() failed or returned empty
+          if (!geminiResponse && response.candidates && response.candidates.length > 0) {
+            const candidate = response.candidates[0];
+            if (candidate.content && candidate.content.parts && candidate.content.parts.length > 0) {
+              geminiResponse = candidate.content.parts
+                .map(part => part.text || '')
+                .join('');
+            }
+          }
+          
+          // If still empty, check if it was blocked due to safety
+          if (!geminiResponse && response.promptFeedback) {
+             console.log('Safety ratings:', response.promptFeedback);
+          }
+
+          // If still empty, throw error to try next model
+          if (!geminiResponse || geminiResponse.trim().length === 0) {
+            throw new Error(`Model ${modelName} returned empty response (length: 0)`);
+          }
+          
+          console.log(`✅ Successfully used model: ${modelName}`);
+          console.log(`   Response length: ${geminiResponse.length} characters`);
+          modelUsed = modelName;
+          success = true;
+          break; // Success, exit loop
+
+        } catch (modelError) {
+          lastError = modelError;
+          console.log(`Model ${modelName} failed, trying next option...`);
+          continue; // Try next model
+        }
+      }
+
+      if (!success) {
+        throw lastError || new Error('All model options failed');
+      }
 
     } catch (apiError) {
-      console.error('Gemini API Error:', apiError.message);
+      console.error('Gemini API Error (all models failed):', apiError.message);
       // Use canned response on API error
       geminiResponse = getCannedResponse();
       usedCannedResponse = true;
@@ -184,8 +268,12 @@ app.post('/api/check-brand', async (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Model: ${MODEL_NAME}`);
-  console.log(`Temperature: ${TEMPERATURE}`);
+  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`📊 Primary Model: ${MODEL_NAME}`);
+  console.log(`📋 Model Options: ${MODEL_OPTIONS.join(', ')}`);
+  console.log(`🌡️  Temperature: ${TEMPERATURE}`);
+  console.log(`🔑 API Key: ${process.env.GEMINI_API_KEY ? 'Set ✓' : 'Missing ✗'}`);
+  console.log(`\n💡 Test the API: http://localhost:${PORT}/health`);
+  console.log(`💡 Server will try models in order until one works`);
 });
 
